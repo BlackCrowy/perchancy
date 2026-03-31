@@ -60,6 +60,7 @@ class Completions:
         prompt = messages[-1]["content"] if messages else ""
         combined_params = extra_params or {}
         combined_params.update(kwargs)
+        
         response = self.client.core.execute(
             model=model, 
             prompt=prompt, 
@@ -72,25 +73,40 @@ class Completions:
             output_selectors=output_selectors,
             disable_safety_settings=disable_safety_settings
         )
+        
         if stream:
             def generate_stream() -> Generator[Dict[str, Any], None, None]:
                 completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
                 created_time = int(time.time())
-                for chunk in response:
+                
+                if isinstance(response, str):
                     yield {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
                         "created": created_time,
                         "model": model,
-                        "choices":[{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]
+                        "choices":[{"index": 0, "delta": {"content": response}, "finish_reason": "stop"}]
                     }
-                yield {
-                    "id": completion_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_time,
-                    "model": model,
-                    "choices":[{"index": 0, "delta": {}, "finish_reason": "stop"}]
-                }
+                    return
+
+                try:
+                    for chunk in response:
+                        yield {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_time,
+                            "model": model,
+                            "choices":[{"index": 0, "delta": {"content": chunk}, "finish_reason": None}]
+                        }
+                finally:
+                    yield {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_time,
+                        "model": model,
+                        "choices":[{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                    }
+                    
             return generate_stream()
         else:
             response_text = str(response) if isinstance(response, list) else response
