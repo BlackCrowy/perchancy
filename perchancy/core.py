@@ -1,52 +1,22 @@
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from DrissionPage import ChromiumPage, ChromiumOptions
+from typing import List, Dict, Optional, Tuple, Any, Union, Generator
 import urllib.request
-import urllib.error
-import subprocess
+import base64
 import json
-import zipfile
-import platform
-import stat
 import pickle
-import shutil
 import os
 import time
-import re
-import ssl
-
-try:
-    ssl._create_default_https_context = ssl._create_unverified_context
-except Exception:
-    pass
-
-if hasattr(uc.Chrome, "__del__"):
-    original_del = uc.Chrome.__del__
-    def patched_del(self):
-        try:
-            original_del(self)
-        except Exception:
-            pass
-    uc.Chrome.__del__ = patched_del
 
 COOKIE_FILE = os.path.join(os.path.expanduser("~"), ".perchancy_cookies.pkl")
 
 DEFAULT_INPUT_SELECTORS = [
-    "[data-name='description']", "textarea[data-name='description']", 
-    ".paragraph-input", "#instructionEl", "#instruction", "#prompt", 
-    "#textInput", "#userInput", "#chatInput", "textarea[id*='input' i]", 
-    "textarea", "input[type='text']"
+    "[data-name='description']", "textarea[data-name='description']", ".paragraph-input", "#instructionEl", "#instruction", "#prompt", "#textInput", "#userInput", "#chatInput", "textarea[id*='input' i]", "textarea", "input[type='text']"
 ]
 DEFAULT_BUTTON_SELECTORS = [
-    "[data-name='generateButton']", "#generateBtn", "#generateButton", 
-    "#generateButtonEl", "#sendButton", "#submitButton", "text=✨ generate", 
-    "text=generate", ".generate-btn", "button[onclick*='generate' i]", 
-    "#resultImgEl", "#resultEl", "button[id*='generate' i]", "button[id*='send' i]", "button"
+    "[data-name='generateButton']", "#generateBtn", "#generateButton", "#generateButtonEl", "#sendButton", "#submitButton", "text=✨ generate", "text=generate", ".generate-btn", "button[onclick*='generate' i]", "#resultImgEl", "#resultEl", "button[id*='generate' i]", "button[id*='send' i]", "button"
 ]
 DEFAULT_OUTPUT_SELECTORS = [
-    "[data-name='output']", "#output", "#responseEl", "#response", ".message", 
-    ".chatMessage", "#chat div", ".output-box", "div[id*='chat'] div"
+    "[data-name='output']", "#output", "#responseEl", "#response", ".message", ".chatMessage", "#chat div", ".output-box", "div[id*='chat'] div"
 ]
 
 DEFAULT_PARAM_MAPPINGS = {
@@ -55,278 +25,221 @@ DEFAULT_PARAM_MAPPINGS = {
     "seed": ['data-name="seed"'],
 }
 
-def get_chrome_main_version(executable_path):
-    if not executable_path or not os.path.exists(executable_path):
-        return None
-    try:
-        if platform.system() == "Windows":
-            cmd = f'wmic datafile where name="{executable_path.replace("\\", "\\\\")}" get Version /value'
-            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.DEVNULL).decode(errors='ignore')
-            match = re.search(r'Version=(\d+)', output)
-            if match: return int(match.group(1))
-        else:
-            output = subprocess.check_output([executable_path, "--version"], stderr=subprocess.DEVNULL).decode(errors='ignore')
-            match = re.search(r'(?:Google Chrome|Chromium)(?: for Testing)?\s+(\d+)', output)
-            if match: return int(match.group(1))
-    except:
-        pass
-    return None
-
-def get_chrome_path(debug=False):
-    base_dir = os.path.join(os.path.expanduser("~"), ".perchancy", "chrome")
-    os.makedirs(base_dir, exist_ok=True)
-    
-    sys_plat = platform.system().lower()
-    machine = platform.machine().lower()
-    
-    if "win" in sys_plat:
-        os_name = "win64"
-        exe_name = "chrome.exe"
-    elif "linux" in sys_plat:
-        os_name = "linux64"
-        exe_name = "chrome"
-    elif "darwin" in sys_plat:
-        os_name = "mac-arm64" if "arm" in machine else "mac-x64"
-        exe_name = "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
-    else:
-        raise Exception("Unsupported OS for auto-install")
-
-    version_file = os.path.join(base_dir, "version.txt")
-    exe_path = os.path.join(base_dir, f"chrome-{os_name}", exe_name)
-
-    url = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
-    data = None
-    for _ in range(3):
-        try:
-            with urllib.request.urlopen(url, timeout=10) as response:
-                data = json.loads(response.read().decode())
-            break
-        except Exception:
-            time.sleep(1)
-
-    if not data:
-        if os.path.exists(exe_path): return exe_path
-        return uc.find_chrome_executable()
-
-    stable_version = data["channels"]["Stable"]["version"]
-    downloads = data["channels"]["Stable"]["downloads"]["chrome"]
-    download_url = next((d["url"] for d in downloads if d["platform"] == os_name), None)
-
-    if os.path.exists(exe_path) and os.path.exists(version_file):
-        with open(version_file, "r") as f:
-            local_version = f.read().strip()
-        if local_version == stable_version:
-            return exe_path 
-
-    if not download_url:
-        return uc.find_chrome_executable()
-
-    extract_dir = os.path.join(base_dir, f"chrome-{os_name}")
-    if os.path.exists(extract_dir):
-        shutil.rmtree(extract_dir, ignore_errors=True)
-
-    zip_path = os.path.join(base_dir, "chrome.zip")
-    
-    for attempt in range(5):
-        try:
-            urllib.request.urlretrieve(download_url, zip_path)
-            break
-        except Exception as e:
-            time.sleep(3)
-            if attempt == 4: raise e
-    
-    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-        zip_ref.extractall(base_dir)
-        
-    os.remove(zip_path)
-    
-    if "linux" in sys_plat or "darwin" in sys_plat:
-        os.chmod(exe_path, os.stat(exe_path).st_mode | stat.S_IEXEC)
-
-    with open(version_file, "w") as f:
-        f.write(stable_version)
-        
-    return exe_path
-
 class BrowserCore:
-    def __init__(self, headless: bool = True, debug: bool = False, disable_safety_settings: bool = False):
+    def __init__(self, headless: bool = True, debug: bool = False):
         self.headless = headless
         self.debug = debug
-        self.disable_safety_settings = disable_safety_settings
-        self.driver = None
+        self.page = None
         self.cookies_loaded_this_session = False
 
-    def log(self, msg: str):
+    def log(self, msg: str) -> None:
         if self.debug:
             print(f"[DEBUG] {msg}")
 
-    def _get_optimized_options(self):
-        options = uc.ChromeOptions()
+    def init_driver(self) -> ChromiumPage:
+        if self.page is not None:
+            return self.page
+        self.log("Initializing browser...")
+        options = ChromiumOptions()
         if self.headless:
-            options.add_argument("--headless=new")
-        
-        options.page_load_strategy = 'eager'
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument("--disable-popup-blocking")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-background-networking")
-        options.add_argument("--disable-features=Translate,OptimizationHints,MediaRouter")
-        options.add_argument("--disable-sync")
-        options.add_argument("--disk-cache-size=1")
-        options.add_argument("--media-cache-size=1")
-        prefs = {
-            "profile.managed_default_content_settings.stylesheet": 2, 
-            "profile.managed_default_content_settings.fonts": 2       
-        }
-        options.add_experimental_option("prefs", prefs)
-        return options
+            options.headless()
+            
+        options.set_user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        options.set_argument("--disable-blink-features=AutomationControlled")
+        options.set_argument("--window-size=1920,1080")
+        options.set_argument("--disable-popup-blocking")
+        options.set_argument("--no-sandbox")
+        options.set_argument("--disable-dev-shm-usage")
+        options.set_argument("--disable-extensions")
+        options.set_argument("--disable-background-networking")
+        options.set_argument("--disable-features=Translate,OptimizationHints,MediaRouter")
+        options.set_argument("--disable-sync")
+        options.set_argument("--mute-audio")
+        options.set_argument("--disable-web-security")
+        options.set_argument("--disable-site-isolation-trials")
+        self.page = ChromiumPage(options)
+        self.log("Browser initialized successfully.")
+        return self.page
 
-    def init_driver(self):
-        if self.driver is not None:
-            return self.driver
-
-        self.log("Initializing Chrome driver...")
-        browser_path = get_chrome_path(self.debug)
-        v_main = get_chrome_main_version(browser_path) 
-        
-        max_retries = 3
-        for attempt in range(max_retries):
+    def clear_cache(self) -> None:
+        if self.page:
             try:
-                self.driver = uc.Chrome(
-                    options=self._get_optimized_options(), 
-                    headless=self.headless, 
-                    browser_executable_path=browser_path,
-                    version_main=v_main 
-                )
-                self.log("Chrome driver initialized successfully.")
-                return self.driver
-            except Exception as e:
-                self.log(f"Driver init error: {e}")
-                try:
-                    if platform.system() == "Windows":
-                        os.system("taskkill /f /im chrome.exe >nul 2>&1")
-                        os.system("taskkill /f /im chromedriver.exe >nul 2>&1")
-                except: pass
-                time.sleep(2)
-                if attempt == max_retries - 1:
-                    raise e
-        return self.driver
-
-    def clear_cache(self):
-        if self.driver:
-            try:
-                self.driver.execute_cdp_cmd('Network.clearBrowserCache', {})
-                self.driver.execute_cdp_cmd('Network.clearBrowserCookies', {})
+                self.log("Clearing cache...")
+                self.page.clear_cache(cookies=False)
             except Exception:
                 pass
 
-    def load_cookies(self):
-        if os.path.exists(COOKIE_FILE) and self.driver:
+    def load_cookies(self) -> bool:
+        if os.path.exists(COOKIE_FILE) and self.page:
             try:
-                self.log("Loading authorization cookies...")
-                cookies = pickle.load(open(COOKIE_FILE, "rb"))
-                added = False
+                self.log("Loading saved cookies from file...")
+                with open(COOKIE_FILE, "rb") as f:
+                    cookies = pickle.load(f)
                 for cookie in cookies:
-                    self.driver.add_cookie(cookie)
-                    added = True
-                return added
+                    self.page.set.cookies(cookie)
+                return True
             except Exception:
-                self.log("Failed to load cookies. File might be corrupted.")
+                self.log("Failed to load cookies. Removing invalid file.")
                 os.remove(COOKIE_FILE)
         return False
 
-    def quit(self):
-        if self.driver is not None:
+    def quit(self) -> None:
+        if self.page is not None:
             self.log("Closing browser...")
             try:
-                self.driver.quit()
+                self.page.quit()
             except Exception:
                 pass
-            self.driver = None
+            self.page = None
 
-    def _type_in_element_js(self, selectors, text) -> str:
-        js = """
-        let sels = arguments[0];
-        let text = arguments[1];
-        for (let sel of sels) {
-            let els = document.querySelectorAll(sel);
-            for (let el of els) {
-                if (el) {
-                    let temp = el;
-                    while(temp && temp.tagName !== 'BODY' && temp.tagName !== 'HTML') {
-                        temp.style.display = 'block';
-                        temp.style.visibility = 'visible';
-                        temp = temp.parentElement;
-                    }
-                    el.value = text;
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    return sel;
-                }
-            }
-        }
-        return null;
-        """
-        try:
-            return self.driver.execute_script(js, selectors, text)
-        except:
-            return None
-
-    def _click_button_js(self, selectors) -> str:
-        js = """
-        let sels = arguments[0];
-        for (let sel of sels) {
-            if (sel.startsWith("text=")) {
-                let btnText = sel.replace("text=", "").toLowerCase();
-                let btns = document.querySelectorAll("button, .button, .generate-btn");
-                for (let b of btns) {
-                    if (b.innerText.toLowerCase().includes(btnText)) {
-                        b.click(); return sel;
-                    }
-                }
-            } else {
-                let els = document.querySelectorAll(sel);
-                if (els.length > 0) { els[0].click(); return sel; }
-            }
-        }
+    def _get_all_frames(self) -> List[Any]:
+        frames = [self.page]
+        visited_ids = {id(self.page)}
         
-        let fallbacks = document.querySelectorAll("button");
-        for (let b of fallbacks) {
-            let t = b.innerText.toLowerCase();
-            if (t.includes("generate") || t.includes("send")) { b.click(); return "fallback_button"; }
-        }
-        return null;
-        """
-        try:
-            return self.driver.execute_script(js, selectors)
-        except:
-            return None
+        queue = [self.page]
+        while queue:
+            curr = queue.pop(0)
+            try:
+                iframes = curr.eles('tag:iframe', timeout=0)
+                for ele in iframes:
+                    try:
+                        f = None
+                        if hasattr(curr, 'get_frame'):
+                            f = curr.get_frame(ele)
+                        elif hasattr(self.page, 'get_frame'):
+                            f = self.page.get_frame(ele)
+                            
+                        if f and id(f) not in visited_ids:
+                            visited_ids.add(id(f))
+                            frames.append(f)
+                            queue.append(f)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        return frames
 
-    def _get_last_visible_text_js(self, selectors) -> str:
+    def _type_in_element_js(self, frame: Any, selectors: List[str], text: str) -> Optional[str]:
         js = """
-        let sels = arguments[0];
-        for (let sel of sels) {
-            let els = document.querySelectorAll(sel);
-            if (els.length > 0) {
-                for (let i = els.length - 1; i >= 0; i--) {
-                    let text = els[i].innerText || els[i].value;
-                    if (text && text.trim().length > 0) return text.trim();
+        try {
+            let sels = __SELS__;
+            let text = __TEXT__;
+            function isVis(el) {
+                if (!el || el.disabled) return false;
+                if (el.offsetWidth > 0 && el.offsetHeight > 0) return true;
+                let rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+            for (let sel of sels) {
+                let els = null;
+                try { els = document.querySelectorAll(sel); } catch(e) { continue; }
+                if (!els) continue;
+                for (let el of els) {
+                    if (isVis(el)) {
+                        el.focus();
+                        let nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+                        if (!nativeSetter || el.tagName === 'INPUT') {
+                            nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
+                        }
+                        if (nativeSetter && nativeSetter.set) {
+                            nativeSetter.set.call(el, text);
+                        } else {
+                            el.value = text;
+                        }
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Enter' }));
+                        return sel;
+                    }
                 }
             }
-        }
-        return "";
-        """
+            return null;
+        } catch(e) { return null; }
+        """.replace('__SELS__', json.dumps(selectors)).replace('__TEXT__', json.dumps(text))
         try:
-            return self.driver.execute_script(js, selectors) or ""
-        except:
+            return frame.run_js(js)
+        except Exception:
+            return None
+
+    def _click_button_js(self, frame: Any, selectors: List[str]) -> Optional[str]:
+        js = """
+        try {
+            let sels = __SELS__;
+            function isVis(el) {
+                if (!el || el.disabled) return false;
+                if (el.offsetWidth > 0 && el.offsetHeight > 0) return true;
+                let rect = el.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }
+            function trigger(el) {
+                el.focus();
+                el.click();
+                ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                    el.dispatchEvent(new MouseEvent(evt, {bubbles: true, cancelable: true, view: window}));
+                });
+            }
+            for (let sel of sels) {
+                if (sel.startsWith("text=")) {
+                    let btnText = sel.replace("text=", "").toLowerCase();
+                    let btns = document.querySelectorAll("button, .button, .generate-btn,[role='button']");
+                    for (let b of btns) {
+                        let t = (b.innerText || b.value || '').toLowerCase();
+                        if (t.includes(btnText) && isVis(b)) {
+                            trigger(b); return sel;
+                        }
+                    }
+                } else {
+                    let els = null;
+                    try { els = document.querySelectorAll(sel); } catch(e) { continue; }
+                    if (els) {
+                        for(let el of els) {
+                            if (isVis(el)) {
+                                trigger(el); return sel;
+                            }
+                        }
+                    }
+                }
+            }
+            let fallbacks = document.querySelectorAll("button, .generate-btn");
+            for (let b of fallbacks) {
+                let t = (b.innerText || b.value || '').toLowerCase();
+                if ((t.includes("generate") || t.includes("send")) && isVis(b)) { 
+                    trigger(b); return "fallback_button"; 
+                }
+            }
+            return null;
+        } catch(e) { return null; }
+        """.replace('__SELS__', json.dumps(selectors))
+        try:
+            return frame.run_js(js)
+        except Exception:
+            return None
+
+    def _get_last_visible_text_js(self, frame: Any, selectors: List[str]) -> str:
+        js = """
+        try {
+            let sels = __SELS__;
+            for (let sel of sels) {
+                let els = null;
+                try { els = document.querySelectorAll(sel); } catch(e) { continue; }
+                if (els && els.length > 0) {
+                    for (let i = els.length - 1; i >= 0; i--) {
+                        let text = els[i].innerText || els[i].value;
+                        if (text && text.trim().length > 0) return text.trim();
+                    }
+                }
+            }
+            return "";
+        } catch(e) { return ""; }
+        """.replace('__SELS__', json.dumps(selectors))
+        try:
+            return frame.run_js(js) or ""
+        except Exception:
             return ""
 
     def _clean_output_text(self, text: str) -> str:
         ui_words = ["copy", "continue", "retry", "stop", "generate", "delete", "output", "regenerate"]
         emojis = ["📋", "▶️", "🔁", "🛑", "✨", "🗑️", "—"]
-        
         lines = text.split("\n")
         cleaned_lines = []
         for line in lines:
@@ -337,178 +250,91 @@ class BrowserCore:
             if stripped: cleaned_lines.append(stripped)
         return "\n".join(cleaned_lines).strip()
 
-    def _scan_images_fast(self, frame_path=None, disable_safety=False):
-        if frame_path is None:
-            frame_path = []
+    def _scan_and_extract_images(self, frame: Any, disable_safety: bool = False) -> Tuple[List[str], bool]:
+        ds_str = 'true' if disable_safety else 'false'
+        js = f"""
+        try {{
+            let disableSafety = {ds_str};
+            let results = {{ srcs: [], blocked: false }};
             
-        found_pids = []
-        is_blocked = False
+            function processWindow(win) {{
+                try {{
+                    let guard = win.document.getElementById('contentGuardEl');
+                    if (!guard) {{
+                        let guards = win.document.querySelectorAll('[id*="contentGuard"],[class*="contentGuard"], .nsfw-warning');
+                        if (guards.length > 0) guard = guards[0];
+                    }}
+                    
+                    if (guard && (guard.offsetWidth > 0 || guard.getBoundingClientRect().width > 0)) {{
+                        if (disableSafety) {{
+                            guard.remove();
+                        }} else {{
+                            results.blocked = true;
+                            return;
+                        }}
+                    }}
+                    
+                    if (!results.blocked && !disableSafety && win.document.body) {{
+                        let text = win.document.body.innerText.toLowerCase();
+                        if (text.includes("safety settings have blocked") || text.includes("unsafe content") || text.includes("inappropriate content")) {{
+                            results.blocked = true;
+                            return;
+                        }}
+                    }}
+                    
+                    let imgs = win.document.querySelectorAll('img');
+                    for (let img of imgs) {{
+                        let src = img.src || '';
+                        let w = img.naturalWidth || img.offsetWidth || 0;
+                        let h = img.naturalHeight || img.offsetHeight || 0;
+                        
+                        if (src.startsWith('data:image/') && src.length > 30000) {{
+                            results.srcs.push(src);
+                        }} else if (src.startsWith('blob:')) {{
+                            results.srcs.push(src);
+                        }} else if (src.startsWith('http')) {{
+                            if (w > 100 && h > 100) {{
+                                results.srcs.push(src);
+                            }}
+                        }}
+                    }}
+                }} catch(e) {{}}
+                
+                try {{
+                    for (let i = 0; i < win.frames.length; i++) {{
+                        processWindow(win.frames[i]);
+                    }}
+                }} catch(e) {{}}
+            }}
             
-        try:
-            self.driver.switch_to.default_content()
-        except:
-            return found_pids, is_blocked
-
-        for idx in frame_path:
-            try:
-                frames = self.driver.find_elements(By.TAG_NAME, "iframe")
-                self.driver.switch_to.frame(frames[idx])
-            except:
-                return found_pids, is_blocked
-
-        js = """
-        let disableSafety = arguments[0];
-        let result = { pids: [], blocked: false };
-
-        let guardNodes = document.querySelectorAll('[id*="contentGuard"], [class*="contentGuard"], [id*="safetyBlock"], .nsfw-warning');
-        for (let guardNode of guardNodes) {
-            let style = window.getComputedStyle(guardNode);
-            if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-                if (disableSafety) {
-                    guardNode.remove();
-                } else {
-                    result.blocked = true;
-                }
-            }
-        }
-        
-        if (!result.blocked && !disableSafety) {
-            let blockedTexts = ["safety settings have blocked", "safety filter", "inappropriate content", "unsafe content"];
-            let bodyText = document.body.innerText.toLowerCase();
-            for (let bt of blockedTexts) {
-                if (bodyText.includes(bt)) {
-                    result.blocked = true;
-                    break;
-                }
-            }
-        }
-
-        if (result.blocked && !disableSafety) {
-            return JSON.stringify(result);
-        }
-
-        let imgs = document.querySelectorAll('img');
-        for (let i = 0; i < imgs.length; i++) {
-            let img = imgs[i];
-            if (disableSafety) img.style.filter = 'none';
+            processWindow(window);
+            results.srcs = [...new Set(results.srcs)];
+            return JSON.stringify(results);
             
-            if (img.naturalWidth < 150 || img.naturalHeight < 150) continue;
-            if (img.src.includes('chrome-error') || img.src.includes('data:image/svg')) continue;
-            
-            let cls = (img.className || '').toLowerCase();
-            if (cls.includes('icon') || cls.includes('avatar') || cls.includes('logo') || cls.includes('btn')) continue;
-            
-            if (!img.dataset.pid) {
-                img.dataset.pid = Math.random().toString(36).substring(2, 15);
-            }
-            result.pids.push(img.dataset.pid);
-        }
-        
-        return JSON.stringify(result);
+        }} catch(e) {{ return JSON.stringify({{srcs:[], blocked:false}}); }}
         """
         try:
-            raw_res = self.driver.execute_script(js, disable_safety)
-            if raw_res:
-                data = json.loads(raw_res)
-                if data.get("blocked"):
-                    is_blocked = True
-                if data.get("pids"):
-                    found_pids.extend(data["pids"])
-        except:
+            res = frame.run_js(js)
+            if res:
+                data = json.loads(res)
+                return data.get('srcs', []), data.get('blocked', False)
+        except Exception:
             pass
+        return [], False
 
-        try:
-            frames_count = len(self.driver.find_elements(By.TAG_NAME, "iframe"))
-        except:
-            return list(set(found_pids)), is_blocked
-
-        for i in range(frames_count):
-            sub_pids, sub_blocked = self._scan_images_fast(frame_path + [i], disable_safety)
-            found_pids.extend(sub_pids)
-            if sub_blocked:
-                is_blocked = True
-
-        return list(set(found_pids)), is_blocked
-
-    def _extract_base64_for_pids(self, target_pids, frame_path=None):
-        if frame_path is None:
-            frame_path = []
-            
-        results = {}
-            
-        try:
-            self.driver.switch_to.default_content()
-        except:
-            return results
-
-        for idx in frame_path:
-            try:
-                frames = self.driver.find_elements(By.TAG_NAME, "iframe")
-                self.driver.switch_to.frame(frames[idx])
-            except:
-                return results
-
-        js = """
-        let tPids = arguments[0];
-        let res = {};
-        let imgs = document.querySelectorAll('img');
-        for (let i = 0; i < imgs.length; i++) {
-            let img = imgs[i];
-            if (tPids.includes(img.dataset.pid)) {
-                if (img.src.includes('base64,')) {
-                    res[img.dataset.pid] = img.src;
-                } else {
-                    try {
-                        let canvas = document.createElement('canvas');
-                        canvas.width = img.naturalWidth;
-                        canvas.height = img.naturalHeight;
-                        let ctx = canvas.getContext('2d');
-                        ctx.drawImage(img, 0, 0);
-                        let b64 = canvas.toDataURL('image/jpeg', 0.95);
-                        if (b64.length > 15000) {
-                            res[img.dataset.pid] = b64;
-                        }
-                    } catch(e) { }
-                }
-            }
-        }
-        return JSON.stringify(res);
-        """
-        try:
-            raw = self.driver.execute_script(js, target_pids)
-            if raw:
-                data = json.loads(raw)
-                results.update(data)
-        except:
-            pass
-
-        try:
-            frames_count = len(self.driver.find_elements(By.TAG_NAME, "iframe"))
-        except:
-            return results
-
-        for i in range(frames_count):
-            sub_res = self._extract_base64_for_pids(target_pids, frame_path + [i])
-            results.update(sub_res)
-
-        return results
-
-    def execute(self, model: str, prompt: str, is_image: bool = False, num_images: int = 1, stream: bool = False, extra_params: dict = None, param_mappings: dict = None, input_selectors: list = None, button_selectors: list = None, output_selectors: list = None):
+    def execute(self, model: str, prompt: str, is_image: bool = False, num_images: int = 1, stream: bool = False, extra_params: Optional[Dict[str, Any]] = None, param_mappings: Optional[Dict[str, Union[str, List[str]]]] = None, input_selectors: Optional[List[str]] = None, button_selectors: Optional[List[str]] = None, output_selectors: Optional[List[str]] = None, disable_safety_settings: bool = False) -> Any:
         self.init_driver()
         self.clear_cache()
-        
         self.log(f"Navigating to generator model: https://perchance.org/{model}")
-        self.driver.get(f"https://perchance.org/{model}")
+        self.page.get(f"https://perchance.org/{model}")
         
         if not self.cookies_loaded_this_session:
             if self.load_cookies():
-                self.log("Cookies applied, refreshing page to log in...")
-                time.sleep(1.0)
-                self.driver.refresh()
+                self.log("Cookies applied, refreshing page...")
+                time.sleep(0.5)
+                self.page.refresh()
             self.cookies_loaded_this_session = True
             
-        wait = WebDriverWait(self.driver, 30)
-
         in_sels = input_selectors if input_selectors else DEFAULT_INPUT_SELECTORS
         btn_sels = button_selectors if button_selectors else DEFAULT_BUTTON_SELECTORS
         out_sels = output_selectors if output_selectors else DEFAULT_OUTPUT_SELECTORS
@@ -520,291 +346,311 @@ class BrowserCore:
                     active_mappings[k] = [v]
                 elif isinstance(v, list):
                     active_mappings[k] = v
-
+                    
         try:
-            self.log("Waiting for main iframe to load...")
-            self.driver.switch_to.default_content()
-            try:
-                wait.until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
-            except:
-                self.log("Initial wait for iframe failed. Refreshing and retrying...")
-                self.driver.refresh()
-                wait.until(EC.presence_of_element_located((By.TAG_NAME, "iframe")))
-                
-            time.sleep(2.0)
-            iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
+            self.log("Searching for the generator iframe...")
+            generator_frame = None
             
-            generator_iframe = None
-            
-            for iframe in iframes:
-                try:
-                    self.driver.switch_to.frame(iframe)
+            for _ in range(60):
+                for f in self._get_all_frames():
                     js_check = """
-                    let in_sels = arguments[0];
-                    let btn_sels = arguments[1];
-                    for(let sel of in_sels) { if(document.querySelector(sel)) return true; }
-                    for(let sel of btn_sels) { 
-                        if(sel.startsWith('text=')) continue; 
-                        if(document.querySelector(sel)) return true; 
-                    }
-                    let btns = document.querySelectorAll('button');
-                    for(let b of btns) { if(b.innerText.toLowerCase().includes('generate')) return true; }
-                    return false;
-                    """
-                    if self.driver.execute_script(js_check, in_sels, btn_sels):
-                        generator_iframe = iframe
-                        self.log("Generator iframe successfully identified.")
-                        break
-                    self.driver.switch_to.default_content()
-                except:
-                    self.driver.switch_to.default_content()
-            
-            if not generator_iframe:
-                self.log("ERROR: Could not find the generator iframe.")
+                    try {
+                        let in_sels = __INSELS__;
+                        let btn_sels = __BTNSELS__;
+                        function isVis(el) {
+                            if (!el) return false;
+                            if (el.offsetWidth > 0 && el.offsetHeight > 0) return true;
+                            let rect = el.getBoundingClientRect();
+                            return rect.width > 0 && rect.height > 0;
+                        }
+                        
+                        let hasIn = false;
+                        for(let sel of in_sels) { 
+                            try { 
+                                let els = document.querySelectorAll(sel);
+                                for(let e of els) { if(isVis(e)) { hasIn = true; break; } }
+                            } catch(e){} 
+                            if(hasIn) break;
+                        }
+                        
+                        let hasBtn = false;
+                        for(let sel of btn_sels) { 
+                            if(sel.startsWith('text=')) continue; 
+                            try { 
+                                let els = document.querySelectorAll(sel);
+                                for(let e of els) { if(isVis(e)) { hasBtn = true; break; } }
+                            } catch(e){} 
+                            if(hasBtn) break;
+                        }
+                        if(!hasBtn) {
+                            let btns = document.querySelectorAll('button, .button, .generate-btn, [role="button"]');
+                            for(let b of btns) { 
+                                let t = (b.innerText || b.value || '').toLowerCase();
+                                if((t.includes('generate') || t.includes('send')) && isVis(b)) { hasBtn = true; break; } 
+                            }
+                        }
+                        return hasIn && hasBtn;
+                    } catch(e) { return false; }
+                    """.replace('__INSELS__', json.dumps(in_sels)).replace('__BTNSELS__', json.dumps(btn_sels))
+                    
+                    try:
+                        if f.run_js(js_check):
+                            generator_frame = f
+                            break
+                    except Exception:
+                        pass
+                if generator_frame:
+                    break
+                time.sleep(0.25)
+                
+            if not generator_frame:
+                self.log("Error: Generator iframe not found.")
                 return "Execution Error: Could not find the generator iframe."
-
+                
+            self.log("Generator iframe successfully identified.")
             initial_text = ""
-            old_pids = set()
-
+            old_srcs = set()
+            
             if is_image:
                 self.log("Capturing baseline image state before generation...")
-                pids, _ = self._scan_images_fast(disable_safety=self.disable_safety_settings)
-                old_pids = set(pids)
+                for f in self._get_all_frames():
+                    srcs, _ = self._scan_and_extract_images(f, disable_safety=disable_safety_settings)
+                    old_srcs.update(srcs)
                 
-            self.driver.switch_to.default_content()
-            self.driver.switch_to.frame(generator_iframe)
-
             if extra_params:
                 self.log(f"Applying {len(extra_params)} extra parameters...")
                 for param_key, param_value in extra_params.items():
                     try:
                         selectors = active_mappings.get(param_key, [param_key])
                         if isinstance(selectors, str): selectors = [selectors]
-                        
                         js_script = """
-                        let sels = arguments[0];
-                        let val = arguments[1];
-                        for (let sel of sels) {
-                            let el = null;
-                            try { el = document.querySelector(sel); } catch(e) {}
-                            if (!el) el = document.getElementById(sel);
-                            if (!el) {
-                                let byName = document.getElementsByName(sel);
-                                if (byName.length > 0) el = byName[0];
+                        try {
+                            let sels = __SELS__;
+                            let val = __VAL__;
+                            for (let sel of sels) {
+                                let el = null;
+                                try { el = document.querySelector(sel); } catch(e) { continue; }
+                                if (!el) {
+                                    let byName = document.getElementsByName(sel);
+                                    if (byName.length > 0) el = byName[0];
+                                }
+                                if(el) { 
+                                    el.focus();
+                                    let nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value");
+                                    if(!nativeSetter || el.tagName==='INPUT' || el.tagName==='TEXTAREA'){
+                                        nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value") || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value");
+                                    }
+                                    if (nativeSetter && nativeSetter.set) {
+                                        nativeSetter.set.call(el, val);
+                                    } else {
+                                        el.value = val;
+                                    }
+                                    el.dispatchEvent(new Event('input', { bubbles: true })); 
+                                    el.dispatchEvent(new Event('change', { bubbles: true })); 
+                                    return sel; 
+                                }
                             }
-                            if(el) { 
-                                el.value = val; 
-                                el.dispatchEvent(new Event('input', { bubbles: true })); 
-                                el.dispatchEvent(new Event('change', { bubbles: true })); 
-                                return sel; 
-                            }
-                        }
-                        return null;
-                        """
-                        self.driver.execute_script(js_script, selectors, param_value)
-                    except Exception as e:
+                            return null;
+                        } catch(e) { return null; }
+                        """.replace('__SELS__', json.dumps(selectors)).replace('__VAL__', json.dumps(param_value))
+                        generator_frame.run_js(js_script)
+                    except Exception:
                         pass
-
+                        
             target_num_images = 1
             if is_image:
                 try:
                     js_num = """
-                    let targetNum = arguments[0];
-                    let sels = document.querySelectorAll('select[data-name="numImages"], select[name="numImages"], select[id*="numImages" i], [data-name="numImages"]');
+                    try {
+                        let targetNum = __TNUM__;
+                        let sels = document.querySelectorAll('select[data-name="numImages"], select[name="numImages"], select[id*="numImages" i], [data-name="numImages"]');
+                        if (sels.length > 0) {
+                            let sel = sels[0];
+                            if (sel.tagName !== 'SELECT') {
+                                let innerSel = sel.querySelector('select');
+                                if (innerSel) sel = innerSel;
+                            }
+                            if(sel.tagName !== 'SELECT') return targetNum;
+                            
+                            let maxVal = 1;
+                            for (let i = 0; i < sel.options.length; i++) {
+                                let val = parseInt(sel.options[i].value);
+                                if (!isNaN(val) && val > maxVal) maxVal = val;
+                            }
+                            let finalNum = Math.min(targetNum, maxVal);
+                            
+                            let exists = Array.from(sel.options).some(opt => parseInt(opt.value) === finalNum);
+                            if (!exists) {
+                                let newOpt = document.createElement('option');
+                                newOpt.value = finalNum.toString();
+                                newOpt.innerText = 'Custom (' + finalNum + ')';
+                                sel.appendChild(newOpt);
+                            }
+                            sel.value = finalNum.toString();
+                            sel.dispatchEvent(new Event('change', { bubbles: true }));
+                            sel.dispatchEvent(new Event('input', { bubbles: true }));
+                            return finalNum;
+                        }
+                        return 1;
+                    } catch(e) { return 1; }
+                    """.replace('__TNUM__', str(num_images))
                     
-                    if (sels.length > 0) {
-                        let sel = sels[0];
-                        if (sel.tagName !== 'SELECT') {
-                            let innerSel = sel.querySelector('select');
-                            if (innerSel) sel = innerSel;
-                        }
-                        
-                        let p = sel;
-                        while(p && p !== document.body && p !== document.documentElement) {
-                            if (window.getComputedStyle(p).display === 'none') p.style.display = 'block';
-                            if (window.getComputedStyle(p).visibility === 'hidden') p.style.visibility = 'visible';
-                            p = p.parentElement;
-                        }
-                        
-                        let maxVal = 1;
-                        for (let i = 0; i < sel.options.length; i++) {
-                            let val = parseInt(sel.options[i].value);
-                            if (!isNaN(val) && val > maxVal) maxVal = val;
-                        }
-                        
-                        let finalNum = Math.min(targetNum, maxVal);
-                        
-                        let exists = Array.from(sel.options).some(opt => parseInt(opt.value) === finalNum);
-                        if (!exists) {
-                            let newOpt = document.createElement('option');
-                            newOpt.value = finalNum.toString();
-                            newOpt.innerText = 'Custom (' + finalNum + ')';
-                            sel.appendChild(newOpt);
-                        }
-                        
-                        sel.value = finalNum.toString();
-                        sel.dispatchEvent(new Event('change', { bubbles: true }));
-                        sel.dispatchEvent(new Event('input', { bubbles: true }));
-                        return finalNum;
-                    }
-                    return 1;
-                    """
-                    target_num_images = self.driver.execute_script(js_num, num_images)
-                    self.log(f"Requested {num_images} images. Target successfully set to {target_num_images}.")
-                except Exception as e:
-                    self.log(f"WARNING: Could not set numImages. Error: {e} (Ignored)")
+                    res_num = generator_frame.run_js(js_num)
+                    if res_num is not None:
+                        target_num_images = int(res_num)
+                        self.log(f"Requested {num_images} images. Target successfully set to {target_num_images}.")
+                    else:
+                        target_num_images = 1
+                except Exception:
                     target_num_images = 1
-
+                    
             if not is_image:
-                initial_text = self._get_last_visible_text_js(out_sels)
-
-            self.log(f"Typing prompt: '{prompt[:30]}...'")
-            typed_selector = self._type_in_element_js(in_sels, prompt)
+                initial_text = self._get_last_visible_text_js(generator_frame, out_sels)
+                
+            self.log(f"Typing prompt into input field...")
+            typed_selector = self._type_in_element_js(generator_frame, in_sels, prompt)
             if not typed_selector:
-                self.log("ERROR: Input field not found or not interactable.")
+                self.log("Error: Input field not found or not interactable.")
                 return "Execution Error: Input field not found or not interactable."
-
-            self.log("Waiting 0.3s for frontend state to sync...")
-            time.sleep(0.3)
-
-            self.log("Clicking generate button...")
-            clicked_selector = self._click_button_js(btn_sels)
+                
+            time.sleep(0.5)
+            
+            self.log("Clicking the generate button...")
+            clicked_selector = self._click_button_js(generator_frame, btn_sels)
             if not clicked_selector:
-                self.log("ERROR: Generate button not found.")
+                self.log("Error: Generate button not found.")
                 return "Execution Error: Generate button not found."
-
+                
             if is_image:
                 timeout_seconds = 90 * target_num_images
-                max_iterations = int(timeout_seconds / 0.15)
-                
-                self.log(f"Waiting for {target_num_images} new valid images to appear (up to {timeout_seconds} seconds)...")
+                max_iterations = int(timeout_seconds / 0.25)
+                self.log(f"Waiting for {target_num_images} new images to render...")
                 new_generated = []
                 
                 for i in range(max_iterations):
-                    current_pids, is_blocked = self._scan_images_fast(disable_safety=self.disable_safety_settings)
+                    current_srcs = set()
+                    is_blocked = False
                     
-                    if is_blocked and not self.disable_safety_settings:
-                        self.log("ERROR: Safety filter warning detected on screen!")
-                        return "Execution Error: Safety filter triggered. (Pass disable_safety_settings=True to Client to ignore)"
-                    
-                    new_pids = [p for p in current_pids if p not in old_pids]
-                    
-                    if len(new_pids) >= target_num_images:
-                        new_generated_pids = new_pids[:target_num_images]
-                        extracted_b64 = self._extract_base64_for_pids(new_generated_pids)
+                    for f in self._get_all_frames():
+                        srcs, blocked = self._scan_and_extract_images(f, disable_safety=disable_safety_settings)
+                        current_srcs.update(srcs)
+                        if blocked: is_blocked = True
                         
-                        if len(extracted_b64) >= target_num_images:
-                            self.log(f"Successfully generated and extracted {target_num_images} new image(s)!")
-                            new_generated = [extracted_b64[pid] for pid in new_generated_pids]
-                            break
+                    if is_blocked and not disable_safety_settings:
+                        self.log("Safety filter triggered on screen.")
+                        return "Execution Error: Safety filter triggered. (Pass disable_safety_settings=True to Client to ignore)"
+                        
+                    new_srcs = list(current_srcs - old_srcs)
                     
-                    time.sleep(0.15)
-                    if i > 0 and i % 30 == 0:
-                        self.log(f"Still waiting for images... ({len(new_pids)}/{target_num_images} ready. {round(i*0.15, 1)}s elapsed)")
-
+                    if len(new_srcs) >= target_num_images:
+                        self.log(f"Successfully extracted {target_num_images} images.")
+                        new_generated = new_srcs[:target_num_images]
+                        break
+                                
+                    time.sleep(0.25)
+                    if i > 0 and i % 4 == 0:
+                        self.log(f"Still waiting... ({len(new_srcs)}/{target_num_images})")
+                        
                 if not new_generated:
-                    self.log(f"ERROR: Image generation timed out after {timeout_seconds}s and no complete images found.")
+                    self.log("Image generation failed or timed out.")
                     return "Image generation failed or timed out."
 
-                return [img.split("base64,")[1] if "base64," in img else img for img in new_generated]
-            
+                final_b64_list = []
+                for src in new_generated:
+                    if src.startswith("data:image/"):
+                        final_b64_list.append(src.split(",", 1)[1])
+                    elif src.startswith("http"):
+                        try:
+                            self.log(f"Downloading external image URL: {src[:50]}...")
+                            req = urllib.request.Request(src, headers={'User-Agent': 'Mozilla/5.0'})
+                            with urllib.request.urlopen(req, timeout=15) as response:
+                                b64 = base64.b64encode(response.read()).decode('utf-8')
+                                final_b64_list.append(b64)
+                        except Exception as e:
+                            self.log(f"Warning: URL download failed ({e}). Returning fallback transparent pixel.")
+                            fallback_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+                            final_b64_list.append(fallback_b64)
+                    else:
+                        final_b64_list.append(src)
+                        
+                return final_b64_list
+                
             else:
                 if stream:
-                    def stream_generator():
-                        try:
-                            last_text = ""
-                            last_yielded_len = 0
-                            stable_checks = 0
-                            
-                            for _ in range(300):
-                                time.sleep(0.2)
-                                current_text = self._get_last_visible_text_js(out_sels)
-                                text_no_loading = current_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
-                                initial_no_loading = initial_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
-                                if text_no_loading != initial_no_loading and len(text_no_loading) > 0:
+                    def stream_generator() -> Generator[str, None, None]:
+                        last_text = ""
+                        last_yielded_len = 0
+                        stable_checks = 0
+                        for _ in range(300):
+                            time.sleep(0.2)
+                            current_text = self._get_last_visible_text_js(generator_frame, out_sels)
+                            text_no_loading = current_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
+                            initial_no_loading = initial_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
+                            if text_no_loading != initial_no_loading and len(text_no_loading) > 0:
+                                break
+                        for _ in range(1200):
+                            time.sleep(0.2)
+                            current_text = self._get_last_visible_text_js(generator_frame, out_sels)
+                            if "generating" in current_text.lower() or "loading" in current_text.lower():
+                                stable_checks = 0
+                                last_text = current_text
+                                continue
+                            cleaned_current = self._clean_output_text(current_text)
+                            if len(cleaned_current) > last_yielded_len:
+                                chunk = cleaned_current[last_yielded_len:]
+                                yield chunk
+                                last_yielded_len = len(cleaned_current)
+                            if current_text and current_text == last_text:
+                                stable_checks += 1
+                                if stable_checks >= 25:
+                                    self.log("Text generation stabilized (stream ended).")
                                     break
-                                    
-                            for _ in range(600):
-                                time.sleep(0.2)
-                                current_text = self._get_last_visible_text_js(out_sels)
-                                
-                                if "generating" in current_text.lower() or "loading" in current_text.lower():
-                                    stable_checks = 0
-                                    last_text = current_text
-                                    continue
-                                    
-                                cleaned_current = self._clean_output_text(current_text)
-                                if len(cleaned_current) > last_yielded_len:
-                                    chunk = cleaned_current[last_yielded_len:]
-                                    yield chunk
-                                    last_yielded_len = len(cleaned_current)
-
-                                if current_text and current_text == last_text:
-                                    stable_checks += 1
-                                    if stable_checks >= 10:
-                                        break
-                                else:
-                                    stable_checks = 0
-                                    last_text = current_text
-                        finally:
-                            try:
-                                self.driver.switch_to.default_content()
-                            except:
-                                pass
-                                
+                            else:
+                                stable_checks = 0
+                                last_text = current_text
                     return stream_generator()
                 else:
-                    self.log("Waiting up to 60s for the real text generation to start...")
+                    self.log("Waiting for text generation to start...")
                     started = False
-                    
                     for _ in range(300):
                         time.sleep(0.2)
-                        current_text = self._get_last_visible_text_js(out_sels)
-                        
+                        current_text = self._get_last_visible_text_js(generator_frame, out_sels)
                         text_no_loading = current_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
                         initial_no_loading = initial_text.lower().replace("generating...", "").replace("generating", "").replace("loading...", "").strip()
-                        
                         if text_no_loading != initial_no_loading and len(text_no_loading) > 0:
                             started = True
+                            self.log("Text generation started. Waiting for output to stabilize...")
                             break
-                    
                     if not started:
+                        self.log("Error: Generation did not start within timeout.")
                         return "Execution Error: Generation did not start within 60 seconds."
-
-                    self.log("Text generation started. Waiting for output to stabilize...")
                     last_text = ""
                     stable_checks = 0
-                    
-                    for _ in range(600):
+                    for _ in range(1200):
                         time.sleep(0.2)
-                        current_text = self._get_last_visible_text_js(out_sels)
-                        
+                        current_text = self._get_last_visible_text_js(generator_frame, out_sels)
                         if "generating" in current_text.lower() or "loading" in current_text.lower():
                             stable_checks = 0
                             last_text = current_text
                             continue
-
                         if current_text and current_text == last_text:
                             stable_checks += 1
-                            if stable_checks >= 10:
+                            if stable_checks >= 25:
+                                self.log("Text generation stabilized. Finishing.")
                                 return self._clean_output_text(current_text)
                         else:
                             stable_checks = 0
                             last_text = current_text
-                    
+                    self.log("Text generation finished (reached max timeout).")
                     return self._clean_output_text(last_text) if last_text else "Execution Error: Output timeout."
-
+                    
         except Exception as e:
             error_name = e.__class__.__name__
-            self.log(f"EXCEPTION ENCOUNTERED: {error_name} - {str(e)}")
-            if "login" in self.driver.current_url.lower():
-                if os.path.exists(COOKIE_FILE): 
-                    os.remove(COOKIE_FILE)
+            self.log(f"Exception encountered: {error_name} - {str(e)}")
+            try:
+                if self.page and hasattr(self.page, 'url') and self.page.url and "login" in str(self.page.url).lower():
+                    if os.path.exists(COOKIE_FILE): 
+                        os.remove(COOKIE_FILE)
+            except Exception:
+                pass
             return f"Execution Error ({error_name}). Failed to load page or element."
-        
-        finally:
-            if not stream or is_image:
-                try:
-                    self.driver.switch_to.default_content()
-                except:
-                    pass
