@@ -2,6 +2,7 @@ from .core import BrowserCore
 import urllib.request
 import urllib.parse
 import json
+import atexit
 import time
 import uuid
 
@@ -153,12 +154,20 @@ class Client:
         self.core = BrowserCore(headless=headless, debug=debug, disable_safety_settings=disable_safety_settings)
         self.chat = Chat(self)
         self.images = Images(self)
+        atexit.register(self.close)
 
     def close(self):
         self.core.quit()
 
     def __enter__(self):
         return self
+    
+    def __del__(self):
+        try:
+            self.close()
+        except:
+            pass
+
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
