@@ -37,7 +37,7 @@ def _translate_text(text: str, target_lang: str, prompt_text: Optional[str] = No
         tl = _detect_language(prompt_text)
     else:
         tl = _get_lang_code(target_lang)
-    chunks = [text[i:i+2000] for i in range(0, len(text), 2000)]
+    chunks =[text[i:i+2000] for i in range(0, len(text), 2000)]
     translated_text = ""
     for chunk in chunks:
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl={tl}&dt=t&q={urllib.parse.quote(chunk)}"
@@ -56,7 +56,7 @@ class Completions:
     def __init__(self, client: 'Client'):
         self.client = client
 
-    def create(self, model: str, messages: List[Dict[str, str]], stream: bool = False, translation: Optional[str] = None, extra_params: Optional[Dict[str, Any]] = None, param_mappings: Optional[Dict[str, Union[str, List[str]]]] = None, input_selectors: Optional[List[str]] = None, button_selectors: Optional[List[str]] = None, output_selectors: Optional[List[str]] = None, disable_safety_settings: bool = False, **kwargs) -> Union[Dict[str, Any], Generator[Dict[str, Any], None, None]]:
+    def create(self, model: str, messages: List[Dict[str, str]], stream: bool = False, translation: Optional[str] = None, extra_params: Optional[Dict[str, Any]] = None, param_mappings: Optional[Dict[str, Union[str, List[str]]]] = None, input_selectors: Optional[List[str]] = None, button_selectors: Optional[List[str]] = None, output_selectors: Optional[List[str]] = None, disable_safety_settings: bool = False, time_for_image: int = 90, **kwargs) -> Union[Dict[str, Any], Generator[Dict[str, Any], None, None]]:
         prompt = messages[-1]["content"] if messages else ""
         combined_params = extra_params or {}
         combined_params.update(kwargs)
@@ -66,6 +66,7 @@ class Completions:
             prompt=prompt, 
             is_image=False, 
             stream=stream,
+            time_for_image=time_for_image,
             extra_params=combined_params,
             param_mappings=param_mappings,
             input_selectors=input_selectors,
@@ -128,7 +129,7 @@ class Images:
     def __init__(self, client: 'Client'):
         self.client = client
 
-    def generate(self, model: str, prompt: str, num_images: int = 1, extra_params: Optional[Dict[str, Any]] = None, param_mappings: Optional[Dict[str, Union[str, List[str]]]] = None, input_selectors: Optional[List[str]] = None, button_selectors: Optional[List[str]] = None, output_selectors: Optional[List[str]] = None, disable_safety_settings: bool = False, **kwargs) -> Dict[str, Any]:
+    def generate(self, model: str, prompt: str, num_images: int = 1, image_format: str = "png", time_for_image: int = 90, extra_params: Optional[Dict[str, Any]] = None, param_mappings: Optional[Dict[str, Union[str, List[str]]]] = None, input_selectors: Optional[List[str]] = None, button_selectors: Optional[List[str]] = None, output_selectors: Optional[List[str]] = None, disable_safety_settings: bool = False, **kwargs) -> Dict[str, Any]:
         combined_params = extra_params or {}
         combined_params.update(kwargs)
         image_results = self.client.core.execute(
@@ -136,6 +137,8 @@ class Images:
             prompt=prompt, 
             is_image=True, 
             num_images=num_images,
+            image_format=image_format,
+            time_for_image=time_for_image,
             extra_params=combined_params,
             param_mappings=param_mappings,
             input_selectors=input_selectors,
@@ -155,9 +158,9 @@ class Images:
         }
 
 class Client:
-    def __init__(self, headless: bool = True, debug: bool = False):
+    def __init__(self, headless: bool = True, debug: bool = False, vpn_configs: Optional[List[str]] = None, max_concurrent_tabs: int = 4):
         self.debug = debug
-        self.core = BrowserCore(headless=headless, debug=debug)
+        self.core = BrowserCore(headless=headless, debug=debug, vpn_configs=vpn_configs, max_concurrent_tabs=max_concurrent_tabs)
         self.chat = Chat(self)
         self.images = Images(self)
         atexit.register(self.close)
